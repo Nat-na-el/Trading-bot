@@ -6,7 +6,7 @@ import asyncio
 from datetime import datetime
 from telegram import Update, InputMediaPhoto
 from telegram.constants import ParseMode
-from telegram.error import BadRequest
+from telegram.error import BadRequest, Forbidden
 from telegram.ext import (
     Application, CommandHandler, ContextTypes,
     ConversationHandler, MessageHandler, filters
@@ -142,7 +142,6 @@ def get_trader_rules(trader_id):
     conn.close()
     if not row:
         return None
-    # Get column names
     col_names = [description[0] for description in c.description]
     row_dict = dict(zip(col_names, row))
     return {
@@ -198,7 +197,6 @@ def get_trade(trade_id, trader_id):
     conn.close()
     if not row:
         return None
-    # Get column names
     col_names = [description[0] for description in c.description]
     d = dict(zip(col_names, row))
     rules = get_trader_rules(trader_id)
@@ -232,7 +230,6 @@ def update_account_balance(trader_id, new_balance):
     conn.commit()
     conn.close()
 
-# Helper to retrieve balance – takes only trader_id
 def get_account_balance(trader_id):
     conn = get_db()
     c = conn.cursor()
@@ -319,6 +316,7 @@ New Balance: <b>${new_balance:,.2f}</b>
 Change: <b>{change_str}</b>
 {f"Trade #{trade_id}" if trade_id else ""}
     """.strip()
+
     try:
         await context.bot.send_message(
             chat_id=GROUP_CHAT_ID,
@@ -326,6 +324,11 @@ Change: <b>{change_str}</b>
             text=text,
             parse_mode=ParseMode.HTML
         )
+        logging.info(f"Balance update sent to topic {BALANCE_TOPIC_ID}")
+    except Forbidden:
+        logging.error(f"Bot is not allowed to post in topic {BALANCE_TOPIC_ID}. Make sure it's an admin.")
+    except BadRequest as e:
+        logging.error(f"BadRequest sending balance update: {e}")
     except Exception as e:
         logging.error(f"Failed to send balance update: {e}")
 
@@ -392,6 +395,11 @@ Please review and take necessary action.
         ''', (trade_id, trader_id, violation_text, msg.message_id))
         conn.commit()
         conn.close()
+        logging.info(f"Violation posted for trade {trade_id}")
+    except Forbidden:
+        logging.error(f"Bot is not allowed to post in topic {VIOLATION_TOPIC_ID}. Make sure it's an admin.")
+    except BadRequest as e:
+        logging.error(f"BadRequest posting violation: {e}")
     except Exception as e:
         logging.error(f"Failed to post violation: {e}")
 
@@ -539,7 +547,6 @@ async def start_setbalance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Enter your current account balance (e.g., 10000):")
     return ACCOUNT_BALANCE
 
-# Handler for processing the balance input – renamed to avoid conflict with helper get_account_balance
 async def process_setbalance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         balance = float(update.message.text.strip())
@@ -834,7 +841,7 @@ async def get_close_mt5(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rr = calculate_achieved_rr(trade['type'], trade['entry'], trade['sl'], exit_p)
     pl_percent = trade['risk'] * rr if trade['risk'] else 0
 
-    # Using the helper get_account_balance (now safe after renaming the handler)
+    # Using the helper get_account_balance (now safe)
     balance = get_account_balance(trade['trader_id'])
     pl_monetary = balance * (pl_percent / 100)
     new_balance = balance + pl_monetary
@@ -1012,7 +1019,7 @@ def main():
     balance_conv = ConversationHandler(
         entry_points=[CommandHandler("setbalance", start_setbalance)],
         states={
-            ACCOUNT_BALANCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_setbalance)],  # Updated handler name
+            ACCOUNT_BALANCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_setbalance)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
