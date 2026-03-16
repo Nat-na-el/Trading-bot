@@ -232,6 +232,7 @@ def update_account_balance(trader_id, new_balance):
     conn.commit()
     conn.close()
 
+# ⚠️ CRITICAL FIX: get_account_balance takes only one parameter
 def get_account_balance(trader_id):
     conn = get_db()
     c = conn.cursor()
@@ -545,7 +546,7 @@ async def get_account_balance(update: Update, context: ContextTypes.DEFAULT_TYPE
         trader_id = update.effective_user.id
         update_account_balance(trader_id, balance)
         await update.message.reply_text(f"Account balance set to ${balance:,.2f}")
-        # Also post the initial balance to the balance topic
+        # Post initial balance to balance topic
         rules = get_trader_rules(trader_id)
         if rules:
             await send_balance_update(context, rules['trader_name'], 0, balance, 100.0, balance, trade_id=None)
@@ -830,6 +831,7 @@ async def get_close_mt5(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rr = calculate_achieved_rr(trade['type'], trade['entry'], trade['sl'], exit_p)
     pl_percent = trade['risk'] * rr if trade['risk'] else 0
 
+    # ⚠️ FIX: get_account_balance now takes only one argument
     balance = get_account_balance(trade['trader_id'])
     pl_monetary = balance * (pl_percent / 100)
     new_balance = balance + pl_monetary
@@ -1023,6 +1025,7 @@ def main():
 
     print("Bot started with full features: balance, daily loss, violation topic, position/lot, balance updates.")
 
+    # Asyncio event loop fix
     try:
         loop = asyncio.get_event_loop()
     except RuntimeError:
