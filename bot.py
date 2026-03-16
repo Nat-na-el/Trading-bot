@@ -1,6 +1,7 @@
 import sqlite3
 import logging
 import html
+import os
 from datetime import datetime
 from telegram import Update, InputMediaPhoto
 from telegram.constants import ParseMode
@@ -11,7 +12,10 @@ from telegram.ext import (
 )
 
 # ========================= CONFIG =========================
-TOKEN = "8670572926:AAELgMUSnnKwGFypqZo2Z7Nxf6WrjjF2LXY"
+TOKEN = os.getenv("TOKEN")  # Read token from environment variable
+if not TOKEN:
+    raise ValueError("No TOKEN environment variable set")
+
 GROUP_CHAT_ID = -1003897036924
 RULES_TOPIC_ID = 18
 TRADE_TOPIC_ID = 25
