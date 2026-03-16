@@ -232,7 +232,7 @@ def update_account_balance(trader_id, new_balance):
     conn.commit()
     conn.close()
 
-# ⚠️ CRITICAL FIX: get_account_balance takes only one parameter
+# Helper to retrieve balance – takes only trader_id
 def get_account_balance(trader_id):
     conn = get_db()
     c = conn.cursor()
@@ -319,7 +319,6 @@ New Balance: <b>${new_balance:,.2f}</b>
 Change: <b>{change_str}</b>
 {f"Trade #{trade_id}" if trade_id else ""}
     """.strip()
-
     try:
         await context.bot.send_message(
             chat_id=GROUP_CHAT_ID,
@@ -540,9 +539,13 @@ async def start_setbalance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Enter your current account balance (e.g., 10000):")
     return ACCOUNT_BALANCE
 
-async def get_account_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Handler for processing the balance input – renamed to avoid conflict with helper get_account_balance
+async def process_setbalance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         balance = float(update.message.text.strip())
+        if balance < 0:
+            await update.message.reply_text("Balance cannot be negative. Please enter a positive number.")
+            return ACCOUNT_BALANCE
         trader_id = update.effective_user.id
         update_account_balance(trader_id, balance)
         await update.message.reply_text(f"Account balance set to ${balance:,.2f}")
@@ -831,7 +834,7 @@ async def get_close_mt5(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rr = calculate_achieved_rr(trade['type'], trade['entry'], trade['sl'], exit_p)
     pl_percent = trade['risk'] * rr if trade['risk'] else 0
 
-    # ⚠️ FIX: get_account_balance now takes only one argument
+    # Using the helper get_account_balance (now safe after renaming the handler)
     balance = get_account_balance(trade['trader_id'])
     pl_monetary = balance * (pl_percent / 100)
     new_balance = balance + pl_monetary
@@ -1009,7 +1012,7 @@ def main():
     balance_conv = ConversationHandler(
         entry_points=[CommandHandler("setbalance", start_setbalance)],
         states={
-            ACCOUNT_BALANCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_account_balance)],
+            ACCOUNT_BALANCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_setbalance)],  # Updated handler name
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
