@@ -1,6 +1,7 @@
 import sqlite3
 import logging
 import html
+import os
 from datetime import datetime
 from telegram import Update, InputMediaPhoto
 from telegram.constants import ParseMode
@@ -11,7 +12,10 @@ from telegram.ext import (
 )
 
 # ========================= CONFIG =========================
-TOKEN = "8670572926:AAELgMUSnnKwGFypqZo2Z7Nxf6WrjjF2LXY"
+TOKEN = os.getenv("TOKEN")  # Read token from environment variable
+if not TOKEN:
+    raise ValueError("No TOKEN environment variable set")
+
 GROUP_CHAT_ID = -1003897036924
 RULES_TOPIC_ID = 18
 TRADE_TOPIC_ID = 25
@@ -1012,7 +1016,16 @@ def main():
     app.add_handler(CommandHandler("violations", cmd_violations))
 
     print("Bot started with full features: balance, daily loss, violation topic, position/lot, balance updates.")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+# Fix for asyncio event loop issue on Render
+import asyncio
+try:
+    loop = asyncio.get_event_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
