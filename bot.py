@@ -13,33 +13,30 @@ from telegram.ext import (
 )
 
 # ========================= CONFIG =========================
-TOKEN = os.getenv("TOKEN")  # Read token from environment variable
+TOKEN = os.getenv("TOKEN")
 if not TOKEN:
     raise ValueError("No TOKEN environment variable set")
-else:
-    print("✓ TOKEN loaded successfully")  # Debug line – remove later
 
 GROUP_CHAT_ID = -1003897036924
 RULES_TOPIC_ID = 18
 TRADE_TOPIC_ID = 25
-VIOLATION_TOPIC_ID = 69   # Violations topic
-BALANCE_TOPIC_ID = 76     # Balance updates topic
-
+VIOLATION_TOPIC_ID = 69
+BALANCE_TOPIC_ID = 76
 DB_NAME = "trading_bot.db"
 
 # States
 RULE_MAX_RISK, RULE_MAX_DAILY_LOSS, RULE_MIN_RR, RULE_REQUIRE_SL, RULE_ALLOWED_PAIRS, RULE_CONFIRM = range(6)
 TRADE_PAIR, TRADE_TYPE, TRADE_ENTRY, TRADE_SL, TRADE_TP, TRADE_RISK, TRADE_POSITION_NUM, TRADE_LOT_SIZE, TRADE_TV_SCREENSHOT, TRADE_MT5_SCREENSHOT, TRADE_CONFIRM = range(11)
 CLOSE_TRADE_ID, CLOSE_EXIT_PRICE, CLOSE_TV_RESULT, CLOSE_MT5_CLOSED, CLOSE_CONFIRM = range(5)
-ACCOUNT_BALANCE = range(1)  # for /setbalance
+ACCOUNT_BALANCE = range(1)
 
-# ========================= DATABASE MIGRATION =========================
+# ========================= DATABASE =========================
+def get_db():
+    return sqlite3.connect(DB_NAME)
+
 def migrate_db():
-    """Add missing columns/tables safely."""
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db()
     c = conn.cursor()
-    
-    # Traders table migration
     c.execute("PRAGMA table_info(Traders)")
     columns = [col[1] for col in c.fetchall()]
     if 'max_daily_loss' not in columns:
@@ -53,7 +50,6 @@ def migrate_db():
     if 'rules_message_id' not in columns:
         c.execute("ALTER TABLE Traders ADD COLUMN rules_message_id INTEGER")
 
-    # Trades table migration
     c.execute("PRAGMA table_info(Trades)")
     columns = [col[1] for col in c.fetchall()]
     if 'pl_monetary' not in columns:
@@ -65,7 +61,6 @@ def migrate_db():
     if 'lot_size' not in columns:
         c.execute("ALTER TABLE Trades ADD COLUMN lot_size REAL")
 
-    # Violations table
     c.execute('''CREATE TABLE IF NOT EXISTS Violations (
         violation_id INTEGER PRIMARY KEY AUTOINCREMENT,
         trade_id INTEGER,
@@ -74,15 +69,12 @@ def migrate_db():
         message_id INTEGER,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )''')
-
     conn.commit()
     conn.close()
 
 def init_db():
-    """Initial table creation."""
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db()
     c = conn.cursor()
-    
     c.execute('''CREATE TABLE IF NOT EXISTS Traders (
         trader_id INTEGER PRIMARY KEY,
         trader_name TEXT,
@@ -96,7 +88,6 @@ def init_db():
         current_daily_loss REAL DEFAULT 0,
         last_loss_reset_date TEXT
     )''')
-    
     c.execute('''CREATE TABLE IF NOT EXISTS Trades (
         trade_id INTEGER PRIMARY KEY AUTOINCREMENT,
         trader_id INTEGER,
@@ -119,7 +110,6 @@ def init_db():
         rr_achieved REAL,
         balance_after REAL
     )''')
-    
     c.execute('''CREATE TABLE IF NOT EXISTS Violations (
         violation_id INTEGER PRIMARY KEY AUTOINCREMENT,
         trade_id INTEGER,
@@ -128,14 +118,13 @@ def init_db():
         message_id INTEGER,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )''')
-    
     conn.commit()
     conn.close()
     migrate_db()
 
 # ========================= DATABASE HELPERS =========================
 def save_trader(trader_id, trader_name, max_risk, max_daily_loss, min_rr, require_sl, allowed_pairs, rules_message_id=None):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db()
     c = conn.cursor()
     c.execute('''
         INSERT OR REPLACE INTO Traders
@@ -146,28 +135,31 @@ def save_trader(trader_id, trader_name, max_risk, max_daily_loss, min_rr, requir
     conn.close()
 
 def get_trader_rules(trader_id):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db()
     c = conn.cursor()
     c.execute("SELECT * FROM Traders WHERE trader_id = ?", (trader_id,))
     row = c.fetchone()
     conn.close()
     if not row:
         return None
+    # Get column names
+    col_names = [description[0] for description in c.description]
+    row_dict = dict(zip(col_names, row))
     return {
-        "trader_name": row[1],
-        "max_risk": row[2],
-        "max_daily_loss": row[3],
-        "min_rr": row[4],
-        "require_sl": bool(row[5]),
-        "allowed_pairs": [p.strip().upper() for p in (row[6] or "").split(",") if p.strip()],
-        "rules_message_id": row[7],
-        "account_balance": row[8] if len(row) > 8 else 10000,
-        "current_daily_loss": row[9] if len(row) > 9 else 0,
-        "last_loss_reset_date": row[10] if len(row) > 10 else None
+        "trader_name": row_dict["trader_name"],
+        "max_risk": row_dict["max_risk"],
+        "max_daily_loss": row_dict["max_daily_loss"],
+        "min_rr": row_dict["min_rr"],
+        "require_sl": bool(row_dict["require_sl"]),
+        "allowed_pairs": [p.strip().upper() for p in (row_dict["allowed_pairs"] or "").split(",") if p.strip()],
+        "rules_message_id": row_dict["rules_message_id"],
+        "account_balance": row_dict.get("account_balance", 10000),
+        "current_daily_loss": row_dict.get("current_daily_loss", 0),
+        "last_loss_reset_date": row_dict.get("last_loss_reset_date")
     }
 
 def log_new_trade(trader_id, pair, trade_type, entry, sl, tp, risk, position_num, lot_size, tv_file_id, mt5_file_id, rule_violation):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db()
     c = conn.cursor()
     c.execute('''
         INSERT INTO Trades
@@ -180,7 +172,7 @@ def log_new_trade(trader_id, pair, trade_type, entry, sl, tp, risk, position_num
     return trade_id
 
 def close_trade_in_db(trade_id, trader_id, exit_price, rr_achieved, pl_percent, pl_monetary, balance_after):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db()
     c = conn.cursor()
     c.execute('''
         UPDATE Trades
@@ -191,7 +183,7 @@ def close_trade_in_db(trade_id, trader_id, exit_price, rr_achieved, pl_percent, 
     conn.close()
 
 def get_open_trade_count(trader_id):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db()
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM Trades WHERE trader_id = ? AND status = 'Open'", (trader_id,))
     count = c.fetchone()[0]
@@ -199,31 +191,34 @@ def get_open_trade_count(trader_id):
     return count
 
 def get_trade(trade_id, trader_id):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db()
     c = conn.cursor()
     c.execute("SELECT * FROM Trades WHERE trade_id = ? AND trader_id = ?", (trade_id, trader_id))
     row = c.fetchone()
     conn.close()
     if not row:
         return None
-    cols = ["trade_id","trader_id","pair","type","entry","sl","tp","risk","leverage",
-            "position_number","lot_size","screenshot_tv","screenshot_mt5","status",
-            "rule_violation","exit_price","pl_percent","pl_monetary","rr_achieved","balance_after"]
-    d = dict(zip(cols, row))
+    # Get column names
+    col_names = [description[0] for description in c.description]
+    d = dict(zip(col_names, row))
     rules = get_trader_rules(trader_id)
     d["trader_name"] = rules["trader_name"] if rules else "Unknown"
     return d
 
 def get_user_trades(trader_id):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db()
     c = conn.cursor()
     c.execute("SELECT * FROM Trades WHERE trader_id = ? ORDER BY trade_id DESC LIMIT 20", (trader_id,))
     rows = c.fetchall()
+    col_names = [description[0] for description in c.description]
+    trades = []
+    for row in rows:
+        trades.append(dict(zip(col_names, row)))
     conn.close()
-    return rows
+    return trades
 
 def get_user_violations(trader_id):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db()
     c = conn.cursor()
     c.execute("SELECT trade_id, pair, rule_violation FROM Trades WHERE trader_id = ? AND rule_violation IS NOT NULL ORDER BY trade_id DESC", (trader_id,))
     rows = c.fetchall()
@@ -231,14 +226,14 @@ def get_user_violations(trader_id):
     return rows
 
 def update_account_balance(trader_id, new_balance):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db()
     c = conn.cursor()
     c.execute("UPDATE Traders SET account_balance = ? WHERE trader_id = ?", (new_balance, trader_id))
     conn.commit()
     conn.close()
 
 def get_account_balance(trader_id):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db()
     c = conn.cursor()
     c.execute("SELECT account_balance FROM Traders WHERE trader_id = ?", (trader_id,))
     row = c.fetchone()
@@ -246,14 +241,14 @@ def get_account_balance(trader_id):
     return row[0] if row else 10000
 
 def update_daily_loss(trader_id, loss_amount):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db()
     c = conn.cursor()
     c.execute("UPDATE Traders SET current_daily_loss = current_daily_loss + ? WHERE trader_id = ?", (loss_amount, trader_id))
     conn.commit()
     conn.close()
 
 def reset_daily_loss_if_needed(trader_id):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db()
     c = conn.cursor()
     c.execute("SELECT current_daily_loss, last_loss_reset_date FROM Traders WHERE trader_id = ?", (trader_id,))
     row = c.fetchone()
@@ -314,7 +309,7 @@ async def send_balance_update(context, trader_name, old_balance, new_balance, ch
     else:
         emoji = "📉"
         change_str = f"{change_amount:+,.2f} ({change_percent:+.2f}%)"
-    
+
     text = f"""
 {emoji} <b>BALANCE UPDATE</b>
 Trader: {html.escape(trader_name)}
@@ -323,7 +318,7 @@ New Balance: <b>${new_balance:,.2f}</b>
 Change: <b>{change_str}</b>
 {f"Trade #{trade_id}" if trade_id else ""}
     """.strip()
-    
+
     try:
         await context.bot.send_message(
             chat_id=GROUP_CHAT_ID,
@@ -345,7 +340,6 @@ async def send_rules_post(context, trader_name, rules, message_thread_id=RULES_T
 • Leverage: <b>1x (fixed)</b>
 <i>Rules set on {datetime.now().strftime('%Y-%m-%d %H:%M')}</i>
     """.strip()
-    
     try:
         msg = await context.bot.send_message(
             chat_id=GROUP_CHAT_ID,
@@ -366,7 +360,7 @@ async def delete_previous_rules_post(context, message_id):
         except BadRequest as e:
             logging.warning(f"Could not delete rules message {message_id}: {e}")
 
-async def post_violation(context, trade_id, trader_name, violation_text, screenshot_file_id=None):
+async def post_violation(context, trade_id, trader_id, trader_name, violation_text, screenshot_file_id=None):
     caption = f"""
 ⚠️ <b>RULE VIOLATION DETECTED</b>
 Trade #{trade_id}
@@ -374,7 +368,6 @@ Trader: {html.escape(trader_name)}
 Violation: {violation_text}
 Please review and take necessary action.
     """.strip()
-    
     try:
         if screenshot_file_id:
             msg = await context.bot.send_photo(
@@ -391,12 +384,12 @@ Please review and take necessary action.
                 parse_mode=ParseMode.HTML,
                 message_thread_id=VIOLATION_TOPIC_ID
             )
-        conn = sqlite3.connect(DB_NAME)
+        conn = get_db()
         c = conn.cursor()
         c.execute('''
             INSERT INTO Violations (trade_id, trader_id, violation_type, message_id)
             VALUES (?, ?, ?, ?)
-        ''', (trade_id, get_trader_rules(trade_id)['trader_id'] if get_trader_rules(trade_id) else 0, violation_text, msg.message_id))
+        ''', (trade_id, trader_id, violation_text, msg.message_id))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -513,21 +506,17 @@ async def confirm_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Cancelled.")
         context.user_data.clear()
         return ConversationHandler.END
-    
     user = update.effective_user
     ud = context.user_data
     old_rules = get_trader_rules(user.id)
     old_message_id = old_rules['rules_message_id'] if old_rules else None
-    
     save_trader(
         user.id, user.full_name,
         ud['max_risk'], ud['max_daily_loss'], ud['min_rr'],
         ud['require_sl'], ud['allowed_pairs'], None
     )
-    
     new_rules = get_trader_rules(user.id)
     new_message_id = await send_rules_post(context, user.full_name, new_rules)
-    
     if new_message_id:
         save_trader(
             user.id, user.full_name,
@@ -536,7 +525,6 @@ async def confirm_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if old_message_id:
             await delete_previous_rules_post(context, old_message_id)
-    
     status = "updated" if ud.get('is_update') else "added"
     await update.message.reply_text(f"Rules {status} successfully!", parse_mode=ParseMode.HTML)
     await show_menu(update)
@@ -669,14 +657,13 @@ async def finish_trade_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Send MT5 screenshot")
         return TRADE_MT5_SCREENSHOT
     context.user_data['mt5_file_id'] = update.message.photo[-1].file_id
-    
+
     ud = context.user_data
     trader_id = update.effective_user.id
     rules = get_trader_rules(trader_id)
-    
-    # Reset daily loss if new day
+
     reset_daily_loss_if_needed(trader_id)
-    
+
     violations = []
     if ud['pair'] not in rules['allowed_pairs']:
         violations.append("Pair not allowed")
@@ -684,16 +671,14 @@ async def finish_trade_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
         violations.append("Missing SL")
     if ud['risk'] > rules['max_risk']:
         violations.append("Risk too high")
-    
     planned_rr = calculate_rr(ud['type'], ud['entry'], ud['sl'], ud['tp'])
     if planned_rr < rules['min_rr']:
         violations.append("RR too low")
-    
     if rules['current_daily_loss'] + ud['risk'] > rules['max_daily_loss']:
         violations.append("Max daily loss exceeded")
-    
+
     violation_str = "⚠️ " + ", ".join(violations) if violations else "✅ No violations"
-    
+
     preview = f"""
 <b>Trade Preview – Confirm?</b>
 Pair: <b>{ud['pair']}</b>
@@ -709,7 +694,6 @@ RR: <b>{planned_rr:.2f}</b>
 Violations: {violation_str}
 Reply <b>YES</b> to post or <b>NO</b> to cancel
     """.strip()
-    
     await update.message.reply_text(preview, parse_mode=ParseMode.HTML)
     return TRADE_CONFIRM
 
@@ -726,11 +710,11 @@ async def confirm_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text not in ["YES", "Y"]:
         await update.message.reply_text("Reply YES, EDIT or CANCEL.")
         return TRADE_CONFIRM
-    
+
     ud = context.user_data
     trader_id = update.effective_user.id
     rules = get_trader_rules(trader_id)
-    
+
     violations = []
     if ud['pair'] not in rules['allowed_pairs']:
         violations.append("Pair not allowed")
@@ -738,30 +722,27 @@ async def confirm_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         violations.append("Missing SL")
     if ud['risk'] > rules['max_risk']:
         violations.append("Risk too high")
-    
     planned_rr = calculate_rr(ud['type'], ud['entry'], ud['sl'], ud['tp'])
     if planned_rr < rules['min_rr']:
         violations.append("RR too low")
-    
     reset_daily_loss_if_needed(trader_id)
-    rules = get_trader_rules(trader_id)  # refresh after reset
-    
+    rules = get_trader_rules(trader_id)
     if rules['current_daily_loss'] + ud['risk'] > rules['max_daily_loss']:
         violations.append("Max daily loss exceeded")
-    
+
     rule_violation = ", ".join(violations) if violations else None
-    
+
     trade_id = log_new_trade(
         trader_id, ud['pair'], ud['type'], ud['entry'], ud['sl'], ud['tp'],
         ud['risk'], ud['position_num'], ud['lot_size'],
         ud['tv_file_id'], ud['mt5_file_id'], rule_violation
     )
-    
+
     if rule_violation:
-        await post_violation(context, trade_id, rules['trader_name'], rule_violation, ud['tv_file_id'])
-    
+        await post_violation(context, trade_id, trader_id, rules['trader_name'], rule_violation, ud['tv_file_id'])
+
     violation_text = f"\n⚠️ {rule_violation}" if rule_violation else ""
-    
+
     caption = f"""
 🟢 <b>OPEN TRADE #{trade_id}</b>
 Trader: {html.escape(rules['trader_name'])}
@@ -775,7 +756,7 @@ Lot: <b>{ud['lot_size']}</b>
 Lev: <b>1x</b>
 RR: <b>{planned_rr:.2f}</b>{violation_text}
     """.strip()
-    
+
     await send_trade_post(context, caption, ud['tv_file_id'], ud['mt5_file_id'], TRADE_TOPIC_ID)
     await update.message.reply_text(f"Trade #{trade_id} posted!")
     await show_menu(update)
@@ -787,14 +768,12 @@ async def start_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_private(update):
         await update.message.reply_text("Use /close in private.")
         return ConversationHandler.END
-    
     trader_id = update.effective_user.id
     open_count = get_open_trade_count(trader_id)
     if open_count == 0:
         await update.message.reply_text("No open trades to close.", parse_mode=ParseMode.HTML)
         await show_menu(update)
         return ConversationHandler.END
-    
     await update.message.reply_text(
         f"<b>🔴 Close Trade</b>\n\nYou have {open_count} open trade(s).\nEnter trade ID to close (use /mytrades):",
         parse_mode=ParseMode.HTML
@@ -811,7 +790,6 @@ async def get_close_trade_id(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if trade['status'] != 'Open':
             await update.message.reply_text("This trade is already closed.")
             return CLOSE_TRADE_ID
-        
         context.user_data['trade_id'] = trade_id
         context.user_data['trade'] = trade
         await update.message.reply_text(f"Trade #{trade_id} selected.\nEnter exit price:")
@@ -842,17 +820,16 @@ async def get_close_mt5(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Send photo")
         return CLOSE_MT5_CLOSED
     context.user_data['close_mt5_id'] = update.message.photo[-1].file_id
-    
+
     trade = context.user_data['trade']
     exit_p = context.user_data['exit_price']
     rr = calculate_achieved_rr(trade['type'], trade['entry'], trade['sl'], exit_p)
     pl_percent = trade['risk'] * rr if trade['risk'] else 0
-    
-    # Get current balance
+
     balance = get_account_balance(trade['trader_id'])
     pl_monetary = balance * (pl_percent / 100)
     new_balance = balance + pl_monetary
-    
+
     preview = f"""
 <b>Close Preview – Confirm?</b>
 Trade #{context.user_data['trade_id']}
@@ -863,7 +840,6 @@ P/L: <b>{pl_percent:+.2f}%</b> (${pl_monetary:+,.2f})
 New Balance: <b>${new_balance:,.2f}</b>
 Reply <b>YES</b> to post or <b>NO</b> to cancel
     """.strip()
-    
     await update.message.reply_text(preview, parse_mode=ParseMode.HTML)
     return CLOSE_CONFIRM
 
@@ -872,36 +848,33 @@ async def confirm_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Cancelled.")
         context.user_data.clear()
         return ConversationHandler.END
-    
+
     ud = context.user_data
     trade = ud['trade']
     exit_p = ud['exit_price']
     rr = calculate_achieved_rr(trade['type'], trade['entry'], trade['sl'], exit_p)
     pl_percent = trade['risk'] * rr if trade['risk'] else 0
-    
+
     trader_id = trade['trader_id']
     old_balance = get_account_balance(trader_id)
     pl_monetary = old_balance * (pl_percent / 100)
     new_balance = old_balance + pl_monetary
-    
+
     try:
-        # Update trade and balance
         close_trade_in_db(
             ud['trade_id'], trader_id, exit_p, rr, pl_percent, pl_monetary, new_balance
         )
         update_account_balance(trader_id, new_balance)
-        
-        # Update daily loss (only if negative)
+
         if pl_monetary < 0:
             loss_percent = -pl_percent
             update_daily_loss(trader_id, loss_percent)
-        
-        # Post balance update to balance topic
+
         await send_balance_update(
             context, trade['trader_name'], old_balance, new_balance,
             pl_percent, pl_monetary, ud['trade_id']
         )
-        
+
         caption = f"""
 🔴 <b>CLOSED TRADE #{ud['trade_id']}</b>
 Trader: {html.escape(trade['trader_name'])}
@@ -915,7 +888,7 @@ Pos #: <b>{trade['position_number']}</b>
 Lot: <b>{trade['lot_size']}</b>
 💰 <b>New Balance: ${new_balance:,.2f}</b>
         """.strip()
-        
+
         await send_trade_post(context, caption, ud['close_tv_id'], ud['close_mt5_id'], TRADE_TOPIC_ID)
         await update.message.reply_text(f"Trade #{ud['trade_id']} closed and posted!")
         await show_menu(update)
@@ -924,7 +897,6 @@ Lot: <b>{trade['lot_size']}</b>
         await update.message.reply_text("An error occurred while closing the trade. Please try again.")
     finally:
         context.user_data.clear()
-    
     return ConversationHandler.END
 
 # ── MYTRADES ──────────────────────────────────────────────
@@ -933,32 +905,26 @@ async def cmd_mytrades(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Use in private chat.")
         return
     trader_id = update.effective_user.id
-    rows = get_user_trades(trader_id)
-    if not rows:
+    trades = get_user_trades(trader_id)
+    if not trades:
         await update.message.reply_text("No trades recorded yet.")
         return
-    
+
     text = "<b>Your Trades (latest first):</b>\n\n"
-    for row in rows:
-        tid = row[0]
-        pair = row[2]
-        ttype = row[3]
-        status = row[13]  # status column
-        risk = row[7]
-        pl = row[16]      # pl_percent
-        pl_mon = row[17]  # pl_monetary
-        pos_num = row[9]  # position_number
-        lot = row[10]     # lot_size
-        
+    for t in trades:
+        status = t['status']
         if status == 'Open':
             status_str = "🟢 OPEN"
+            pl_str = ""
         else:
+            pl = t.get('pl_percent')
+            pl_mon = t.get('pl_monetary')
             pl_str = f"{pl:+.2f}%" if pl is not None else "—"
             mon_str = f" (${pl_mon:+,.2f})" if pl_mon is not None else ""
             status_str = f"🔴 CLOSED {pl_str}{mon_str}"
-        
-        text += f"#{tid} {pair} {ttype} Pos:{pos_num} Lot:{lot} • {status_str} • Risk {risk}%\n"
-    
+
+        text += f"#{t['trade_id']} {t['pair']} {t['type']}  Pos:{t['position_number']} Lot:{t['lot_size']}  •  {status_str}  •  Risk {t['risk']}%\n"
+
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 # ── VIOLATIONS ────────────────────────────────────────────
@@ -971,11 +937,9 @@ async def cmd_violations(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not rows:
         await update.message.reply_text("No violations yet. Good job! 👍", parse_mode=ParseMode.HTML)
         return
-    
     text = "<b>Your Violations:</b>\n\n"
     for r in rows:
         text += f"#{r[0]} {r[1]} → {r[2]}\n"
-    
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -986,15 +950,13 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========================= MAIN =========================
 def main():
     init_db()
-    
     logging.basicConfig(
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         level=logging.INFO
     )
-    
+
     app = Application.builder().token(TOKEN).build()
-    
-    # Conversation handlers
+
     rules_conv = ConversationHandler(
         entry_points=[CommandHandler("setrules", start_setrules)],
         states={
@@ -1007,7 +969,7 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
-    
+
     trade_conv = ConversationHandler(
         entry_points=[CommandHandler("trade", start_trade)],
         states={
@@ -1025,7 +987,7 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
-    
+
     close_conv = ConversationHandler(
         entry_points=[CommandHandler("close", start_close)],
         states={
@@ -1037,7 +999,7 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
-    
+
     balance_conv = ConversationHandler(
         entry_points=[CommandHandler("setbalance", start_setbalance)],
         states={
@@ -1045,8 +1007,7 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
-    
-    # Add handlers
+
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(rules_conv)
     app.add_handler(balance_conv)
@@ -1055,17 +1016,15 @@ def main():
     app.add_handler(CommandHandler("mytrades", cmd_mytrades))
     app.add_handler(CommandHandler("balance", cmd_balance))
     app.add_handler(CommandHandler("violations", cmd_violations))
-    
+
     print("Bot started with full features: balance, daily loss, violation topic, position/lot, balance updates.")
-    
-    # Fix for asyncio event loop issue on Render / some environments
+
     try:
         loop = asyncio.get_event_loop()
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-    
-    # This line was the problem — now correctly inside main()
+
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
