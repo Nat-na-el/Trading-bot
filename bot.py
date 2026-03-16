@@ -1015,8 +1015,17 @@ def main():
     app.add_handler(CommandHandler("balance", cmd_balance))
     app.add_handler(CommandHandler("violations", cmd_violations))
 
-    print("Bot started with full features: balance, daily loss, violation topic, position/lot, balance updates.")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+  print("Bot started with full features: balance, daily loss, violation topic, position/lot, balance updates.")
+
+# Fix for asyncio event loop issue on Render
+import asyncio
+try:
+    loop = asyncio.get_event_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
