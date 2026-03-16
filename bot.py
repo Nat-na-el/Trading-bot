@@ -16,6 +16,8 @@ from telegram.ext import (
 TOKEN = os.getenv("TOKEN")  # Read token from environment variable
 if not TOKEN:
     raise ValueError("No TOKEN environment variable set")
+else:
+    print("✓ TOKEN loaded successfully")  # Debug line – remove later
 
 GROUP_CHAT_ID = -1003897036924
 RULES_TOPIC_ID = 18
