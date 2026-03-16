@@ -1044,7 +1044,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
     
-    # Add handlers
+       # Add handlers
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(rules_conv)
     app.add_handler(balance_conv)
@@ -1063,8 +1063,9 @@ def main():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     
-    # This line was the problem — now correctly inside main()
+    # This MUST be the last thing in main()
     app.run_polling(allowed_updates=Update.ALL_TYPES)
+
 
 if __name__ == "__main__":
     main()
