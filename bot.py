@@ -2,6 +2,7 @@ import sqlite3
 import logging
 import html
 import os
+import asyncio
 from datetime import datetime
 from telegram import Update, InputMediaPhoto
 from telegram.constants import ParseMode
@@ -1015,17 +1016,16 @@ def main():
     app.add_handler(CommandHandler("balance", cmd_balance))
     app.add_handler(CommandHandler("violations", cmd_violations))
 
-  print("Bot started with full features: balance, daily loss, violation topic, position/lot, balance updates.")
+    print("Bot started with full features: balance, daily loss, violation topic, position/lot, balance updates.")
 
-# Fix for asyncio event loop issue on Render
-import asyncio
-try:
-    loop = asyncio.get_event_loop()
-except RuntimeError:
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    # Fix for asyncio event loop issue on Render
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
-app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
