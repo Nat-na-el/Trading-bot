@@ -545,6 +545,10 @@ async def get_account_balance(update: Update, context: ContextTypes.DEFAULT_TYPE
         trader_id = update.effective_user.id
         update_account_balance(trader_id, balance)
         await update.message.reply_text(f"Account balance set to ${balance:,.2f}")
+        # Also post the initial balance to the balance topic
+        rules = get_trader_rules(trader_id)
+        if rules:
+            await send_balance_update(context, rules['trader_name'], 0, balance, 100.0, balance, trade_id=None)
         await show_menu(update)
         return ConversationHandler.END
     except ValueError:
