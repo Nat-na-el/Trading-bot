@@ -11,6 +11,7 @@ from telegram.ext import (
     Application, CommandHandler, ContextTypes,
     ConversationHandler, MessageHandler, filters
 )
+from telegram.request import HTTPXRequest
 
 # ========================= CONFIG =========================
 TOKEN = os.getenv("TOKEN")
@@ -971,7 +972,9 @@ def main():
         level=logging.INFO
     )
 
-    app = Application.builder().token(TOKEN).build()
+    # Force HTTP/1.1 to avoid HTTP/2 protocol errors
+    request = HTTPXRequest(http_version="1.1")
+    app = Application.builder().token(TOKEN).request(request).build()
 
     rules_conv = ConversationHandler(
         entry_points=[CommandHandler("setrules", start_setrules)],
